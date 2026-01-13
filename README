@@ -1,0 +1,20 @@
+//Declarative Jenkins pipeline
+
+pipeline {
+    agent any
+
+    environment {
+        // optional environment variables
+    }
+
+    stages {
+        // your build/test/deploy stages go here
+    }
+
+    post {
+        // actions after success/failure (cleanup, notifications)
+    }
+}
+
+
+
