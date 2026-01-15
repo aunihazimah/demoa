@@ -8,11 +8,13 @@ pipeline {
     agent any
 
     environment {
+        // API metadata
         API_NAME     = "AppointmentAPI"
         API_VERSION  = "1.0.0"
         API_CONTEXT  = "/appointment"
         API_RESOURCE = "/appointmentservices/getAppointment"
 
+        // WSO2 endpoints
         PUBLISHER_URL = "https://wso2am:9443"
         GATEWAY_URL   = "https://wso2am:8243"
     }
@@ -23,7 +25,7 @@ pipeline {
             steps {
                 git branch: 'main',
                     url: 'https://github.com/aunihazimah/demoa.git',
-                    credentialsId: 'github-token'
+                    credentialsId: 'github-token' // must exist as global credential
             }
         }
 
@@ -62,14 +64,12 @@ pipeline {
                 timeout(time: 3, unit: 'MINUTES') {
                     waitUntil {
                         script {
-                            // curl returns the HTTP status
                             def status = sh(
                                 script: "curl -k -s -o /dev/null -w '%{http_code}' ${PUBLISHER_URL}/api/am/publisher/v4/apis",
                                 returnStdout: true
                             ).trim()
-
                             echo "WSO2 HTTP Status: ${status}"
-                            return status == '200' || status == '401'
+                            return status == '401' || status == '200'
                         }
                     }
                 }
@@ -83,14 +83,14 @@ pipeline {
                     string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
-                        // Use curl + sed to extract access_token (sandbox-friendly)
+                        // Get OAuth token using curl and sed
                         env.WSO2_ACCESS_TOKEN = sh(
                             script: """
                                 curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
                                     -H "Content-Type: application/x-www-form-urlencoded" \
                                     -u "$CLIENT_ID:$CLIENT_SECRET" \
                                     -d "grant_type=client_credentials" \
-                                | sed -n 's/.*"access_token":"\\([^"]*\\)".*/\\1/p'
+                                | sed -n 's/.*"access_token":"\\\\([^"]*\\\\)".*/\\\\1/p'
                             """,
                             returnStdout: true
                         ).trim()
@@ -103,7 +103,8 @@ pipeline {
 
         stage('Verify Backend API') {
             steps {
-                sh "curl -s http://localhost:${SERVICE_PORT}${API_RESOURCE}"
+                // Use Docker network hostname instead of localhost
+                sh "curl -s http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
             }
         }
 
@@ -127,7 +128,7 @@ pipeline {
                             script: """
                                 curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
                                     "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" \
-                                | sed -n 's/.*"id":"\\([^"]*\\)".*/\\1/p'
+                                | sed -n 's/.*"id":"\\\\([^"]*\\\\)".*/\\\\1/p'
                             """,
                             returnStdout: true
                         ).trim()
@@ -148,7 +149,7 @@ pipeline {
 
         stage('Smoke Test via API Gateway') {
             steps {
-                sh "curl -k -f ${GATEWAY_URL}${API_CONTEXT}${API_RESOURCE}"
+                sh "curl -k -f http://${CONTAINER_NAME}:${SERVICE_PORT}${API_CONTEXT}${API_RESOURCE}"
             }
         }
     }
