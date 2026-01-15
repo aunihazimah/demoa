@@ -76,8 +76,8 @@ pipeline {
         stage('Request OAuth Token') {
             steps {
                 withCredentials([
-                    string(credentialsId: 'wso2-client-id', secretVariable: 'CLIENT_ID'),
-                    string(credentialsId: 'wso2-api-token', secretVariable: 'CLIENT_SECRET')
+                    string(credentialsId: 'wso2-client-id', variable: 'CLIENT_ID'),
+                    string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
                         def response = sh(
