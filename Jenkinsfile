@@ -1,13 +1,13 @@
+// Top-level variables so they are visible everywhere, including post{}
+def CONTAINER_NAME = "myapi-container"
+def IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
+def NETWORK_NAME   = "jenkins-net"
+def SERVICE_PORT   = "8290"
+
 pipeline {
     agent any
 
     environment {
-        // Docker container & image configuration
-        CONTAINER_NAME = "myapi-container"
-        IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
-        NETWORK_NAME   = "jenkins-net"
-        SERVICE_PORT   = "8290"
-
         // API metadata
         API_NAME       = "AppointmentAPI"
         API_VERSION    = "1.0.0"
@@ -17,9 +17,6 @@ pipeline {
         // WSO2 endpoints
         PUBLISHER_URL  = "https://wso2am:9443"
         GATEWAY_URL    = "https://wso2am:8243"
-
-        // WSO2 Client ID stored in Jenkins (Secret Text)
-        WSO2_CLIENT_ID = credentials('wso2-client-id')
     }
 
     stages {
@@ -81,7 +78,11 @@ pipeline {
 
         stage('Request WSO2 OAuth2 Token') {
             steps {
-                withCredentials([string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')]) {
+                // Use both Client ID and Secret as Secret Text
+                withCredentials([
+                    string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
+                    string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
+                ]) {
                     script {
                         env.WSO2_ACCESS_TOKEN = sh(
                             script: """curl -k -s -X POST ${PUBLISHER_URL}/token \
@@ -104,32 +105,45 @@ pipeline {
 
         stage('Register / Update API in WSO2') {
             steps {
-                sh """
-                curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
-                    -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                    -F "file=@openapi.yaml" \
-                    -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
-                """
+                script {
+                    // Use the same withCredentials block to ensure secrets are visible
+                    withCredentials([
+                        string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
+                        string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
+                    ]) {
+                        sh """
+                        curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
+                            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                            -F "file=@openapi.yaml" \
+                            -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
+                        """
+                    }
+                }
             }
         }
 
         stage('Publish API to Gateway') {
             steps {
                 script {
-                    // Retrieve API ID dynamically
-                    def apiId = sh(
-                        script: """curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                            "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" | jq -r '.list[0].id'""",
-                        returnStdout: true
-                    ).trim()
-                    echo "API ID: ${apiId}"
+                    withCredentials([
+                        string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
+                        string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
+                    ]) {
+                        // Retrieve API ID dynamically
+                        def apiId = sh(
+                            script: """curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                                "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" | jq -r '.list[0].id'""",
+                            returnStdout: true
+                        ).trim()
+                        echo "API ID: ${apiId}"
 
-                    sh """
-                    curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
-                        -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                        -H "Content-Type: application/json" \
-                        -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
-                    """
+                        sh """
+                        curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
+                            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                            -H "Content-Type: application/json" \
+                            -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
+                        """
+                    }
                 }
             }
         }
@@ -144,6 +158,7 @@ pipeline {
     post {
         always {
             script {
+                // Use top-level def variables
                 sh """
                 docker stop ${CONTAINER_NAME} || true
                 docker rm ${CONTAINER_NAME} || true
