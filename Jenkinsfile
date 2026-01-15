@@ -1,4 +1,4 @@
-// Top-level variables (visible everywhere, including post{})
+// Top-level variables
 def CONTAINER_NAME = "myapi-container"
 def IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
 def NETWORK_NAME   = "jenkins-net"
@@ -23,10 +23,9 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
-                // GitHub checkout using global credential
                 git branch: 'main',
                     url: 'https://github.com/aunihazimah/demoa.git',
-                    credentialsId: 'github-token' // make sure this exists in Jenkins
+                    credentialsId: 'github-token' // must exist in Jenkins Global credentials
             }
         }
 
@@ -56,7 +55,6 @@ pipeline {
                         -p ${SERVICE_PORT}:${SERVICE_PORT} \
                         ${IMAGE_NAME}
                 """
-                // wait for container to be ready
                 sleep 20
             }
         }
@@ -78,77 +76,74 @@ pipeline {
             }
         }
 
-        stage('Register / Update API in WSO2') {
+        stage('Get WSO2 OAuth Token') {
             steps {
                 withCredentials([
                     string(credentialsId: 'wso2-client-id', variable: 'CLIENT_ID'),
                     string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
-                        // Get OAuth token locally
-                        def token = sh(
-                            script: """
-                                curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
-                                    -H "Content-Type: application/x-www-form-urlencoded" \
-                                    -u "$CLIENT_ID:$CLIENT_SECRET" \
-                                    -d "grant_type=client_credentials" \
-                                | sed -n 's/.*"access_token":"\\\\([^"]*\\\\)".*/\\\\1/p'
-                            """,
+                        env.WSO2_ACCESS_TOKEN = sh(
+                            script: """curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
+                                -H 'Content-Type: application/x-www-form-urlencoded' \
+                                -u "$CLIENT_ID:$CLIENT_SECRET" \
+                                -d 'grant_type=client_credentials' \
+                                | sed -n 's/.*"access_token":"\\\\([^"]*\\\\)".*/\\\\1/p'""",
                             returnStdout: true
                         ).trim()
-
                         echo "✅ OAuth token acquired"
-
-                        // Import OpenAPI definition
-                        sh """
-                            curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
-                                -H "Authorization: Bearer ${token}" \
-                                -F "file=@openapi.yaml" \
-                                -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
-                        """
-
-                        // Get API ID dynamically
-                        def apiId = sh(
-                            script: """
-                                curl -k -s -H "Authorization: Bearer ${token}" \
-                                    "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" \
-                                | sed -n 's/.*"id":"\\\\([^"]*\\\\)".*/\\\\1/p'
-                            """,
-                            returnStdout: true
-                        ).trim()
-
-                        echo "API ID: ${apiId}"
-
-                        // Publish API
-                        sh """
-                            curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
-                                -H "Authorization: Bearer ${token}" \
-                                -H "Content-Type: application/json" \
-                                -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
-                        """
                     }
+                }
+            }
+        }
+
+        stage('Register / Update API in WSO2') {
+            steps {
+                script {
+                    // Import OpenAPI definition
+                    sh """
+                        curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
+                            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                            -F "file=@openapi.yaml" \
+                            -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
+                    """
+
+                    // Get API ID dynamically
+                    def apiId = sh(
+                        script: """curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                            "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" \
+                            | sed -n 's/.*"id":"\\\\([^"]*\\\\)".*/\\\\1/p'""",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "API ID: ${apiId}"
+
+                    // Publish API
+                    sh """
+                        curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
+                            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                            -H "Content-Type: application/json" \
+                            -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
+                    """
                 }
             }
         }
 
         stage('Verify Backend API') {
             steps {
-                // Use Docker network hostname
                 sh "curl -s http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
             }
         }
 
         stage('Smoke Test via API Gateway') {
             steps {
-                // Test full API path
-                sh "curl -k -f http://${CONTAINER_NAME}:${SERVICE_PORT}${API_CONTEXT}${API_RESOURCE}"
+                sh "curl -k -f http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
             }
         }
     }
 
     post {
         always {
-            // Cleanup container
             sh """
                 docker stop ${CONTAINER_NAME} || true
                 docker rm ${CONTAINER_NAME} || true
