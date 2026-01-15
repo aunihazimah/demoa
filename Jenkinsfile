@@ -1,31 +1,28 @@
-// Top-level variables so they are visible everywhere, including post{}
-def CONTAINER_NAME = "myapi-container"
-def IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
-def NETWORK_NAME   = "jenkins-net"
-def SERVICE_PORT   = "8290"
-
 pipeline {
     agent any
 
     environment {
-        // API metadata
+        // Docker
+        CONTAINER_NAME = "myapi-container"
+        IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
+        NETWORK_NAME   = "jenkins-net"
+        SERVICE_PORT   = "8290"
+
+        // API
         API_NAME       = "AppointmentAPI"
         API_VERSION    = "1.0.0"
         API_CONTEXT    = "/appointment"
-        API_RESOURCE   = "/appointmentservices/getAppointment"
 
-        // WSO2 endpoints
-        PUBLISHER_URL  = "https://wso2am:9443"
-        GATEWAY_URL    = "https://wso2am:8243"
+        // WSO2
+        WSO2_BASE      = "https://wso2am:9443"
+        PUBLISHER_API  = "/api/am/publisher/v4"
     }
 
     stages {
 
         stage('Checkout SCM') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/aunihazimah/demoa.git',
-                    credentialsId: 'github-token'
+                checkout scm
             }
         }
 
@@ -49,55 +46,54 @@ pipeline {
                 sh """
                 docker stop ${CONTAINER_NAME} || true
                 docker rm ${CONTAINER_NAME} || true
+
                 docker run -d \
-                    --name ${CONTAINER_NAME} \
-                    --network ${NETWORK_NAME} \
-                    -p ${SERVICE_PORT}:${SERVICE_PORT} \
-                    ${IMAGE_NAME}
+                  --name ${CONTAINER_NAME} \
+                  --network ${NETWORK_NAME} \
+                  -p ${SERVICE_PORT}:${SERVICE_PORT} \
+                  ${IMAGE_NAME}
                 """
-                sleep 20
             }
         }
 
         stage('Wait for WSO2 API Manager') {
             steps {
                 script {
-                    echo "⏳ Waiting for WSO2 AM to start..."
                     timeout(time: 3, unit: 'MINUTES') {
                         waitUntil {
                             def status = sh(
-                                script: "curl -k -s -o /dev/null -w '%{http_code}' ${PUBLISHER_URL}/api/am/publisher/v4/apis",
+                                script: "curl -k -s -o /dev/null -w %{http_code} ${WSO2_BASE}${PUBLISHER_API}/apis",
                                 returnStdout: true
                             ).trim()
                             echo "WSO2 HTTP Status: ${status}"
-                            return status == '200' || status == '401'
+                            return status == "401" || status == "200"
                         }
                     }
                 }
             }
         }
 
-        stage('Request WSO2 OAuth2 Token') {
+        stage('Request OAuth Token') {
             steps {
                 withCredentials([
-                    string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
-                    string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
+                    string(credentialsId: 'wso2-client-id', secretVariable: 'CLIENT_ID'),
+                    string(credentialsId: 'wso2-api-token', secretVariable: 'CLIENT_SECRET')
                 ]) {
                     script {
-                        def tokenResponse = sh(
+                        def response = sh(
                             script: """
-                            curl -k -s -X POST ${PUBLISHER_URL}/token \
-                              -H "Content-Type: application/x-www-form-urlencoded" \
-                              -u "${WSO2_CLIENT_ID}:${WSO2_CLIENT_SECRET}" \
-                              -d "grant_type=client_credentials"
+                            curl -k -s -X POST ${WSO2_BASE}/oauth2/token \
+                              -H 'Content-Type: application/x-www-form-urlencoded' \
+                              -u ${CLIENT_ID}:${CLIENT_SECRET} \
+                              -d grant_type=client_credentials
                             """,
                             returnStdout: true
                         ).trim()
 
-                        def json = readJSON text: tokenResponse
-                        env.WSO2_ACCESS_TOKEN = json.access_token
+                        def json = new groovy.json.JsonSlurper().parseText(response)
+                        env.ACCESS_TOKEN = json.access_token
 
-                        echo "✅ WSO2 OAuth token obtained"
+                        echo "OAuth token acquired"
                     }
                 }
             }
@@ -105,61 +101,7 @@ pipeline {
 
         stage('Verify Backend API') {
             steps {
-                sh "curl -f http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
-            }
-        }
-
-        stage('Register / Update API in WSO2') {
-            steps {
-                sh """
-                curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
-                  -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                  -F "file=@openapi.yaml" \
-                  -F "additionalProperties={
-                        \\"name\\":\\"${API_NAME}\\",
-                        \\"context\\":\\"${API_CONTEXT}\\",
-                        \\"version\\":\\"${API_VERSION}\\",
-                        \\"endpointConfig\\":{
-                            \\"endpoint_type\\":\\"http\\",
-                            \\"sandbox_endpoints\\":{
-                                \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\"
-                            }
-                        }
-                    }"
-                """
-            }
-        }
-
-        stage('Publish API to Gateway') {
-            steps {
-                script {
-                    def apiResponse = sh(
-                        script: """
-                        curl -k -s \
-                          -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                          "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}"
-                        """,
-                        returnStdout: true
-                    ).trim()
-
-                    def apiJson = readJSON text: apiResponse
-                    def apiId = apiJson.list[0].id
-
-                    echo "API ID: ${apiId}"
-
-                    sh """
-                    curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
-                      -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                      -H "Content-Type: application/json" \
-                      -d '{"action":"Publish","apiId":"${apiId}"}'
-                    """
-                }
-            }
-        }
-
-        stage('Smoke Test via API Gateway') {
-            steps {
-                sh "curl -k -f ${GATEWAY_URL}${API_CONTEXT}${API_RESOURCE}"
+                sh "curl -s http://localhost:${SERVICE_PORT}/appointmentservices/getAppointment"
             }
         }
     }
