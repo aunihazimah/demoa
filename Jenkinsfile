@@ -14,18 +14,21 @@ pipeline {
         API_CONTEXT    = "/appointment"
         API_RESOURCE   = "/appointmentservices/getAppointment"
 
-        // WSO2 endpoints (use container name, not localhost)
+        // WSO2 endpoints
         PUBLISHER_URL  = "https://wso2am:9443"
         GATEWAY_URL    = "https://wso2am:8243"
 
-        // WSO2 access token stored securely in Jenkins credentials
-        WSO2_TOKEN     = credentials('wso2-api-token')
+        // WSO2 credentials stored in Jenkins (Consumer Key + Secret)
+        WSO2_CLIENT_ID     = credentials('wso2-client-id')       // your Consumer Key
+        WSO2_CLIENT_SECRET = credentials('wso2-api-token')       // your Consumer Secret
     }
 
     stages {
         stage('Checkout SCM') {
             steps {
-                checkout scm
+                git branch: 'main',
+                    url: 'https://github.com/aunihazimah/demoa.git',
+                    credentialsId: 'github-token'
             }
         }
 
@@ -55,7 +58,7 @@ pipeline {
                     -p ${SERVICE_PORT}:${SERVICE_PORT} \
                     ${IMAGE_NAME}
                 """
-                sleep 40
+                sleep 20
             }
         }
 
@@ -70,10 +73,24 @@ pipeline {
                                 returnStdout: true
                             ).trim()
                             echo "WSO2 HTTP Status: ${status}"
-                            // Accept 200 OK or 401 Unauthenticated as ready
                             return status == '200' || status == '401'
                         }
                     }
+                }
+            }
+        }
+
+        stage('Request WSO2 OAuth2 Token') {
+            steps {
+                script {
+                    env.WSO2_ACCESS_TOKEN = sh(
+                        script: """curl -k -s -X POST ${PUBLISHER_URL}/token \
+                            -H "Content-Type: application/x-www-form-urlencoded" \
+                            -u "${WSO2_CLIENT_ID}:${WSO2_CLIENT_SECRET}" \
+                            -d "grant_type=client_credentials" | jq -r '.access_token'""",
+                        returnStdout: true
+                    ).trim()
+                    echo "✅ WSO2 OAuth token obtained"
                 }
             }
         }
@@ -88,34 +105,31 @@ pipeline {
             steps {
                 sh """
                 curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
-                    -H "Authorization: Bearer ${WSO2_TOKEN}" \
+                    -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
                     -F "file=@openapi.yaml" \
-                    -F "additionalProperties={ \\
-                        \\"name\\":\\"${API_NAME}\\", \\ 
-                        \\"context\\":\\"${API_CONTEXT}\\", \\ 
-                        \\"version\\":\\"${API_VERSION}\\", \\ 
-                        \\"endpointConfig\\":{ \\ 
-                            \\"endpoint_type\\":\\"http\\", \\ 
-                            \\"sandbox_endpoints\\":{ \\ 
-                                \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" \\ 
-                            } \\ 
-                        } \\ 
-                    }"
+                    -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
                 """
             }
         }
 
         stage('Publish API to Gateway') {
             steps {
-                sh """
-                curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
-                    -H "Authorization: Bearer ${WSO2_TOKEN}" \
-                    -H "Content-Type: application/json" \
-                    -d '{
-                        "action": "Publish",
-                        "apiId": "'"${API_NAME}:${API_VERSION}"'"
-                    }'
-                """
+                script {
+                    // Retrieve API ID from WSO2
+                    def apiId = sh(
+                        script: """curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                            "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" | jq -r '.list[0].id'""",
+                        returnStdout: true
+                    ).trim()
+                    echo "API ID: ${apiId}"
+
+                    sh """
+                    curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
+                        -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
+                    """
+                }
             }
         }
 
@@ -136,5 +150,3 @@ pipeline {
         }
     }
 }
-
-//ok

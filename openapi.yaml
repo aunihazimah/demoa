@@ -2,17 +2,36 @@ openapi: 3.0.1
 
 info:
   title: AppointmentService
-  description: API for appointment services
+  description: API for appointment services deployed on WSO2 Micro Integrator.
   version: 1.0.0
+  contact:
+    name: API Team
+    email: api-team@example.com
+    url: https://example.com/support
 
 servers:
   - url: http://myapi-container:8290
+    description: Internal Docker network (use container DNS name)
+
+tags:
+  - name: appointments
+    description: Operations for appointment services
 
 paths:
   /appointmentservices/getAppointment:
     get:
+      tags:
+        - appointments
       summary: Get appointment details
+      description: Returns appointment details from the backend service.
       operationId: getAppointment
+      parameters:
+        - name: id
+          in: query
+          required: false
+          description: Optional appointment identifier
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -20,3 +39,27 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  status:
+                    type: string
+                    example: OK
+                  data:
+                    type: object
+                    description: Appointment payload
+        '400':
+          description: Bad request
+        '500':
+          description: Server error
+
+components:
+  securitySchemes:
+    defaultAuth:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://wso2am:9443/oauth2/token
+          scopes:
+            default: Default scope
+
+security:
+  - defaultAuth: []
