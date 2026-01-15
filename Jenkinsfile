@@ -143,12 +143,13 @@ pipeline {
     }
 
     post {
-        always {
-            sh """
-                docker stop ${CONTAINER_NAME} || true
-                docker rm ${CONTAINER_NAME} || true
-            """
-            cleanWs()
-        }
+    always {
+        // Keep container running for testing
+        // sh """
+        //     docker stop ${CONTAINER_NAME} || true
+        //     docker rm ${CONTAINER_NAME} || true
+        // """
+        cleanWs()
     }
+}
 }
