@@ -18,9 +18,8 @@ pipeline {
         PUBLISHER_URL  = "https://wso2am:9443"
         GATEWAY_URL    = "https://wso2am:8243"
 
-        // WSO2 credentials stored in Jenkins (Consumer Key + Secret)
-        WSO2_CLIENT_ID     = credentials('wso2-client-id')       // your Consumer Key
-        WSO2_CLIENT_SECRET = credentials('wso2-api-token')       // your Consumer Secret
+        // WSO2 Client ID stored in Jenkins (Secret Text)
+        WSO2_CLIENT_ID = credentials('wso2-client-id')
     }
 
     stages {
@@ -82,15 +81,17 @@ pipeline {
 
         stage('Request WSO2 OAuth2 Token') {
             steps {
-                script {
-                    env.WSO2_ACCESS_TOKEN = sh(
-                        script: """curl -k -s -X POST ${PUBLISHER_URL}/token \
-                            -H "Content-Type: application/x-www-form-urlencoded" \
-                            -u "${WSO2_CLIENT_ID}:${WSO2_CLIENT_SECRET}" \
-                            -d "grant_type=client_credentials" | jq -r '.access_token'""",
-                        returnStdout: true
-                    ).trim()
-                    echo "✅ WSO2 OAuth token obtained"
+                withCredentials([string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')]) {
+                    script {
+                        env.WSO2_ACCESS_TOKEN = sh(
+                            script: """curl -k -s -X POST ${PUBLISHER_URL}/token \
+                                -H "Content-Type: application/x-www-form-urlencoded" \
+                                -u "${WSO2_CLIENT_ID}:${WSO2_CLIENT_SECRET}" \
+                                -d "grant_type=client_credentials" | jq -r '.access_token'""",
+                            returnStdout: true
+                        ).trim()
+                        echo "✅ WSO2 OAuth token obtained"
+                    }
                 }
             }
         }
@@ -115,7 +116,7 @@ pipeline {
         stage('Publish API to Gateway') {
             steps {
                 script {
-                    // Retrieve API ID from WSO2
+                    // Retrieve API ID dynamically
                     def apiId = sh(
                         script: """curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
                             "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" | jq -r '.list[0].id'""",
@@ -142,10 +143,12 @@ pipeline {
 
     post {
         always {
-            sh """
-            docker stop ${CONTAINER_NAME} || true
-            docker rm ${CONTAINER_NAME} || true
-            """
+            script {
+                sh """
+                docker stop ${CONTAINER_NAME} || true
+                docker rm ${CONTAINER_NAME} || true
+                """
+            }
             cleanWs()
         }
     }
