@@ -1,4 +1,3 @@
-// Top-level variables (must be outside pipeline)
 def CONTAINER_NAME = "myapi-container"
 def IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
 def NETWORK_NAME   = "jenkins-net"
@@ -8,11 +7,8 @@ pipeline {
     agent any
 
     environment {
-        // API metadata
         API_NAME    = "AppointmentAPI"
         API_VERSION = "1.0.0"
-
-        // WSO2
         PUBLISHER_URL = "https://wso2am:9443"
     }
 
@@ -58,15 +54,17 @@ pipeline {
 
         stage('Wait for WSO2 API Manager') {
             steps {
-                timeout(time: 3, unit: 'MINUTES') {
-                    waitUntil {
-                        def status = sh(
-                            script: "curl -k -s -o /dev/null -w '%{http_code}' ${PUBLISHER_URL}/api/am/publisher/v4/apis",
-                            returnStdout: true
-                        ).trim()
+                script {
+                    timeout(time: 3, unit: 'MINUTES') {
+                        waitUntil {
+                            def status = sh(
+                                script: "curl -k -s -o /dev/null -w '%{http_code}' ${PUBLISHER_URL}/api/am/publisher/v4/apis",
+                                returnStdout: true
+                            ).trim()
 
-                        echo "WSO2 HTTP Status: ${status}"
-                        return status == '401' || status == '200'
+                            echo "WSO2 HTTP Status: ${status}"
+                            return status == '401' || status == '200'
+                        }
                     }
                 }
             }
