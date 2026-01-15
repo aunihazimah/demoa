@@ -8,13 +8,11 @@ pipeline {
     agent any
 
     environment {
-        // API metadata
-        API_NAME    = "AppointmentAPI"
-        API_VERSION = "1.0.0"
-        API_CONTEXT = "/appointment"
+        API_NAME     = "AppointmentAPI"
+        API_VERSION  = "1.0.0"
+        API_CONTEXT  = "/appointment"
         API_RESOURCE = "/appointmentservices/getAppointment"
 
-        // WSO2 endpoints
         PUBLISHER_URL = "https://wso2am:9443"
         GATEWAY_URL   = "https://wso2am:8243"
     }
@@ -63,13 +61,16 @@ pipeline {
             steps {
                 timeout(time: 3, unit: 'MINUTES') {
                     waitUntil {
-                        def status = sh(
-                            script: "curl -k -s -o /dev/null -w '%{http_code}' ${PUBLISHER_URL}/api/am/publisher/v4/apis",
-                            returnStdout: true
-                        ).trim()
+                        script {
+                            // curl returns the HTTP status
+                            def status = sh(
+                                script: "curl -k -s -o /dev/null -w '%{http_code}' ${PUBLISHER_URL}/api/am/publisher/v4/apis",
+                                returnStdout: true
+                            ).trim()
 
-                        echo "WSO2 HTTP Status: ${status}"
-                        return status == '401' || status == '200'
+                            echo "WSO2 HTTP Status: ${status}"
+                            return status == '200' || status == '401'
+                        }
                     }
                 }
             }
@@ -82,15 +83,15 @@ pipeline {
                     string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
-                        // Use shell to extract token (safe for Jenkins sandbox)
+                        // Use curl + sed to extract access_token (sandbox-friendly)
                         env.WSO2_ACCESS_TOKEN = sh(
-                            script: '''
+                            script: """
                                 curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
                                     -H "Content-Type: application/x-www-form-urlencoded" \
                                     -u "$CLIENT_ID:$CLIENT_SECRET" \
                                     -d "grant_type=client_credentials" \
                                 | sed -n 's/.*"access_token":"\\([^"]*\\)".*/\\1/p'
-                            ''',
+                            """,
                             returnStdout: true
                         ).trim()
 
