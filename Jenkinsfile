@@ -20,6 +20,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout SCM') {
             steps {
                 git branch: 'main',
@@ -78,19 +79,24 @@ pipeline {
 
         stage('Request WSO2 OAuth2 Token') {
             steps {
-                // Use both Client ID and Secret as Secret Text
                 withCredentials([
                     string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
                     string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
                 ]) {
                     script {
-                        env.WSO2_ACCESS_TOKEN = sh(
-                            script: """curl -k -s -X POST ${PUBLISHER_URL}/token \
-                                -H "Content-Type: application/x-www-form-urlencoded" \
-                                -u "${WSO2_CLIENT_ID}:${WSO2_CLIENT_SECRET}" \
-                                -d "grant_type=client_credentials" | jq -r '.access_token'""",
+                        def tokenResponse = sh(
+                            script: """
+                            curl -k -s -X POST ${PUBLISHER_URL}/token \
+                              -H "Content-Type: application/x-www-form-urlencoded" \
+                              -u "${WSO2_CLIENT_ID}:${WSO2_CLIENT_SECRET}" \
+                              -d "grant_type=client_credentials"
+                            """,
                             returnStdout: true
                         ).trim()
+
+                        def json = readJSON text: tokenResponse
+                        env.WSO2_ACCESS_TOKEN = json.access_token
+
                         echo "✅ WSO2 OAuth token obtained"
                     }
                 }
@@ -105,45 +111,48 @@ pipeline {
 
         stage('Register / Update API in WSO2') {
             steps {
-                script {
-                    // Use the same withCredentials block to ensure secrets are visible
-                    withCredentials([
-                        string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
-                        string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
-                    ]) {
-                        sh """
-                        curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
-                            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                            -F "file=@openapi.yaml" \
-                            -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
-                        """
-                    }
-                }
+                sh """
+                curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
+                  -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                  -F "file=@openapi.yaml" \
+                  -F "additionalProperties={
+                        \\"name\\":\\"${API_NAME}\\",
+                        \\"context\\":\\"${API_CONTEXT}\\",
+                        \\"version\\":\\"${API_VERSION}\\",
+                        \\"endpointConfig\\":{
+                            \\"endpoint_type\\":\\"http\\",
+                            \\"sandbox_endpoints\\":{
+                                \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\"
+                            }
+                        }
+                    }"
+                """
             }
         }
 
         stage('Publish API to Gateway') {
             steps {
                 script {
-                    withCredentials([
-                        string(credentialsId: 'wso2-client-id', variable: 'WSO2_CLIENT_ID'),
-                        string(credentialsId: 'wso2-api-token', variable: 'WSO2_CLIENT_SECRET')
-                    ]) {
-                        // Retrieve API ID dynamically
-                        def apiId = sh(
-                            script: """curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                                "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" | jq -r '.list[0].id'""",
-                            returnStdout: true
-                        ).trim()
-                        echo "API ID: ${apiId}"
+                    def apiResponse = sh(
+                        script: """
+                        curl -k -s \
+                          -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                          "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}"
+                        """,
+                        returnStdout: true
+                    ).trim()
 
-                        sh """
-                        curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
-                            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
-                            -H "Content-Type: application/json" \
-                            -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
-                        """
-                    }
+                    def apiJson = readJSON text: apiResponse
+                    def apiId = apiJson.list[0].id
+
+                    echo "API ID: ${apiId}"
+
+                    sh """
+                    curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
+                      -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                      -H "Content-Type: application/json" \
+                      -d '{"action":"Publish","apiId":"${apiId}"}'
+                    """
                 }
             }
         }
@@ -157,13 +166,10 @@ pipeline {
 
     post {
         always {
-            script {
-                // Use top-level def variables
-                sh """
-                docker stop ${CONTAINER_NAME} || true
-                docker rm ${CONTAINER_NAME} || true
-                """
-            }
+            sh """
+            docker stop ${CONTAINER_NAME} || true
+            docker rm ${CONTAINER_NAME} || true
+            """
             cleanWs()
         }
     }
