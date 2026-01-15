@@ -23,9 +23,10 @@ pipeline {
 
         stage('Checkout SCM') {
             steps {
+                // GitHub checkout using global credential
                 git branch: 'main',
                     url: 'https://github.com/aunihazimah/demoa.git',
-                    credentialsId: 'github-token' // must exist as global credential
+                    credentialsId: 'github-token' // make sure this exists in Jenkins
             }
         }
 
@@ -55,6 +56,7 @@ pipeline {
                         -p ${SERVICE_PORT}:${SERVICE_PORT} \
                         ${IMAGE_NAME}
                 """
+                // wait for container to be ready
                 sleep 20
             }
         }
@@ -76,15 +78,15 @@ pipeline {
             }
         }
 
-        stage('Request OAuth Token') {
+        stage('Register / Update API in WSO2') {
             steps {
                 withCredentials([
                     string(credentialsId: 'wso2-client-id', variable: 'CLIENT_ID'),
                     string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
-                        // Get OAuth token using curl and sed
-                        env.WSO2_ACCESS_TOKEN = sh(
+                        // Get OAuth token locally
+                        def token = sh(
                             script: """
                                 curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
                                     -H "Content-Type: application/x-www-form-urlencoded" \
@@ -96,29 +98,11 @@ pipeline {
                         ).trim()
 
                         echo "✅ OAuth token acquired"
-                    }
-                }
-            }
-        }
 
-        stage('Verify Backend API') {
-            steps {
-                // Use Docker network hostname instead of localhost
-                sh "curl -s http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
-            }
-        }
-
-        stage('Register / Update API in WSO2') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'wso2-client-id', variable: 'CLIENT_ID'),
-                    string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
-                ]) {
-                    script {
                         // Import OpenAPI definition
                         sh """
                             curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
-                                -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                                -H "Authorization: Bearer ${token}" \
                                 -F "file=@openapi.yaml" \
                                 -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
                         """
@@ -126,7 +110,7 @@ pipeline {
                         // Get API ID dynamically
                         def apiId = sh(
                             script: """
-                                curl -k -s -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                                curl -k -s -H "Authorization: Bearer ${token}" \
                                     "${PUBLISHER_URL}/api/am/publisher/v4/apis?query=name:${API_NAME}" \
                                 | sed -n 's/.*"id":"\\\\([^"]*\\\\)".*/\\\\1/p'
                             """,
@@ -138,7 +122,7 @@ pipeline {
                         // Publish API
                         sh """
                             curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/change-lifecycle \
-                                -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+                                -H "Authorization: Bearer ${token}" \
                                 -H "Content-Type: application/json" \
                                 -d '{"action":"Publish","apiId":"'"${apiId}"'"}'
                         """
@@ -147,8 +131,16 @@ pipeline {
             }
         }
 
+        stage('Verify Backend API') {
+            steps {
+                // Use Docker network hostname
+                sh "curl -s http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
+            }
+        }
+
         stage('Smoke Test via API Gateway') {
             steps {
+                // Test full API path
                 sh "curl -k -f http://${CONTAINER_NAME}:${SERVICE_PORT}${API_CONTEXT}${API_RESOURCE}"
             }
         }
@@ -156,6 +148,7 @@ pipeline {
 
     post {
         always {
+            // Cleanup container
             sh """
                 docker stop ${CONTAINER_NAME} || true
                 docker rm ${CONTAINER_NAME} || true
