@@ -76,8 +76,11 @@ pipeline {
             }
         }
 
+        //Handling secure API access with OAuth
         stage('Get WSO2 OAuth Token') {
             steps {
+                // ✅ Automatically generate an OAuth token for secure API Manager access
+                // This token will be used to authenticate API registration, publishing, and lifecycle changes
                 withCredentials([
                     string(credentialsId: 'wso2-client-id', variable: 'CLIENT_ID'),
                     string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
