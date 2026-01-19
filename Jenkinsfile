@@ -169,3 +169,4 @@ stage('Smoke Test via API Gateway - SET Appointment') {
     }
 }
 }
+}
