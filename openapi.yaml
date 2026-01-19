@@ -39,7 +39,7 @@ paths:
           description: Server error
 
   /appointmentservices/setAppointment:
-    post:
+    put:
       tags:
         - appointments
       summary: Create or update an appointment

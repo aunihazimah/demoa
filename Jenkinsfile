@@ -3,6 +3,9 @@ def CONTAINER_NAME = "myapi-container"
 def IMAGE_NAME     = "myapi-img:${BUILD_NUMBER}"
 def NETWORK_NAME   = "jenkins-net"
 def SERVICE_PORT   = "8290"
+def GET_APPOINTMENT_RESOURCE = "/appointmentservices/getAppointment"
+def SET_APPOINTMENT_RESOURCE = "/appointmentservices/setAppointment"
+
 
 pipeline {
     agent any
@@ -12,7 +15,7 @@ pipeline {
         API_NAME     = "AppointmentAPI"
         API_VERSION  = "1.0.0"
         API_CONTEXT  = "/appointment"
-        API_RESOURCE = "/appointmentservices/getAppointment"
+]
 
         // WSO2 endpoints
         PUBLISHER_URL = "https://wso2am:9443"
@@ -79,7 +82,7 @@ pipeline {
         //Handling secure API access with OAuth
         stage('Get WSO2 OAuth Token') {
             steps {
-                // ✅ Automatically generate an OAuth token for secure API Manager access
+                // Automatically generate an OAuth token for secure API Manager access
                 // This token will be used to authenticate API registration, publishing, and lifecycle changes
                 withCredentials([
                     string(credentialsId: 'wso2-client-id', variable: 'CLIENT_ID'),
@@ -94,7 +97,7 @@ pipeline {
                                 | sed -n 's/.*"access_token":"\\\\([^"]*\\\\)".*/\\\\1/p'""",
                             returnStdout: true
                         ).trim()
-                        echo "✅ OAuth token acquired"
+                        echo "OAuth token acquired"
                     }
                 }
             }
@@ -108,6 +111,7 @@ pipeline {
                         curl -k -X POST ${PUBLISHER_URL}/api/am/publisher/v4/apis/import-openapi \
                             -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
                             -F "file=@openapi.yaml" \
+                            -F "overwriteAPI=true" \
                             -F "additionalProperties={ \\"name\\":\\"${API_NAME}\\", \\"context\\":\\"${API_CONTEXT}\\", \\"version\\":\\"${API_VERSION}\\", \\"endpointConfig\\":{ \\"endpoint_type\\":\\"http\\", \\"sandbox_endpoints\\":{ \\"url\\":\\"http://${CONTAINER_NAME}:${SERVICE_PORT}\\" } } }"
                     """
 
@@ -132,18 +136,27 @@ pipeline {
             }
         }
 
-        stage('Verify Backend API') {
-            steps {
-                sh "curl -s http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
-            }
-        }
-
-        stage('Smoke Test via API Gateway') {
-            steps {
-                sh "curl -k -f http://${CONTAINER_NAME}:${SERVICE_PORT}${API_RESOURCE}"
-            }
-        }
+        stage('Smoke Test via API Gateway - GET Appointment') {
+    steps {
+        sh """
+            curl -k -X GET \
+            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+            ${GATEWAY_URL}${API_CONTEXT}${GET_APPOINTMENT_RESOURCE}
+        """
     }
+}
+
+stage('Smoke Test via API Gateway - SET Appointment') {
+    steps {
+        sh """
+            curl -k -X PUT \
+            -H "Authorization: Bearer ${WSO2_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            ${GATEWAY_URL}${API_CONTEXT}${SET_APPOINTMENT_RESOURCE}
+        """
+    }
+}
+
 
     post {
     always {
