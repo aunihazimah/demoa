@@ -15,7 +15,7 @@ pipeline {
         API_NAME     = "AppointmentAPI"
         API_VERSION  = "1.0.0"
         API_CONTEXT  = "/appointment"
-]
+
 
         // WSO2 endpoints
         PUBLISHER_URL = "https://wso2am:9443"
