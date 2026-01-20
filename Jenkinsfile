@@ -87,7 +87,7 @@ pipeline {
                                 curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
                                     -H "Content-Type: application/x-www-form-urlencoded" \
                                     -u "$CLIENT_ID:$CLIENT_SECRET" \
-                                    -d "grant_type=client_credentials&scope=apim:api_create apim:api_publish apim:api_manage" \
+                                    -d "grant_type=client_credentials&scope=apim:api_create apim:api_publish apim:api_manage apim:api_view" \
                                     | sed -n 's/.*"access_token":"\\([^"]*\\)".*/\\1/p'
                             ''',
                             returnStdout: true
