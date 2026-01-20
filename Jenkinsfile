@@ -81,12 +81,13 @@ pipeline {
                     string(credentialsId: 'wso2-api-token', variable: 'CLIENT_SECRET')
                 ]) {
                     script {
+                        // Request token with Publisher scopes
                         env.WSO2_ACCESS_TOKEN = sh(
                             script: '''
                                 curl -k -s -X POST ${PUBLISHER_URL}/oauth2/token \
                                     -H "Content-Type: application/x-www-form-urlencoded" \
                                     -u "$CLIENT_ID:$CLIENT_SECRET" \
-                                    -d "grant_type=client_credentials" \
+                                    -d "grant_type=client_credentials&scope=apim:api_create apim:api_publish apim:api_manage" \
                                     | sed -n 's/.*"access_token":"\\([^"]*\\)".*/\\1/p'
                             ''',
                             returnStdout: true
