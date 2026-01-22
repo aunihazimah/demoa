@@ -4,10 +4,13 @@ info:
   title: AppointmentService
   description: API for managing appointments exposed via WSO2 API Manager.
   version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
 
 servers:
-  - url: http://myapi-container:8290
-    description: Backend service inside Docker network
+  - url: http://localhost
+    description: Placeholder (actual backend configured in Publisher)
 
 tags:
   - name: appointments
@@ -19,6 +22,7 @@ paths:
       tags:
         - appointments
       summary: Get appointment details
+      description: Retrieve appointment information by ID
       operationId: getAppointment
       parameters:
         - name: id
@@ -43,6 +47,7 @@ paths:
       tags:
         - appointments
       summary: Create or update an appointment
+      description: Create a new appointment or update an existing one
       operationId: setAppointment
       requestBody:
         required: true
@@ -68,13 +73,12 @@ paths:
 
 components:
   securitySchemes:
-    defaultAuth:
+    OAuth2:
       type: oauth2
       flows:
         clientCredentials:
           tokenUrl: https://wso2am:9443/oauth2/token
-          scopes:
-            default: Default scope
+          scopes: {}
 
 security:
-  - defaultAuth: []
+  - OAuth2: []
